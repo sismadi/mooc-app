@@ -1,0 +1,44 @@
+
+svg {
+  stroke:white; fill:none; height: 25px; width:25px;
+/* stroke:black; fill:none; height: 20px; width:20px; margin-right: 5px; */
+}
+
+.svg, [class*="bi-"] {
+/* display:inline-block; height: 24px; width: 24px; padding: 0; min-width: 24px; */
+display:inline-block; height: 25px; width: 25px; padding: 0; min-width: 25px;
+/* background-size: 100% 100%; */
+/* font:normal 1em/1 Arial, sans-serif; */
+/* font-size:1.5em; */
+color: black;
+/* stroke:var(--pButtonColor); */
+stroke-width:1;
+stroke-linecap:round;
+stroke-linejoin:round;
+fill:none;
+stroke:white;
+}
+
+
+.chart-svg { stroke:none;}
+
+[class*="bi-"]:hover { stroke:var(--pLightColor);}
+
+
+.gallery svg { width: 100px; height:auto;}
+
+svg path{ fill:url('#gradient');}
+svg { filter: drop-shadow(3px 5px 2px rgb(0 0 0 / 0.4)); }
+svg stop:nth-child(1) { stop-color: var(--pLightColor);}
+svg stop:nth-child(2) { stop-color: var(--pColor);}
+
+svg:hover path {
+stroke-dasharray: 200;
+stroke-dashoffset: 200;
+pointer-events: none;
+animation: animateDash 3s linear forwards infinite;
+}
+
+
+
+@keyframes animateDash { to { stroke-dashoffset: 0; } }

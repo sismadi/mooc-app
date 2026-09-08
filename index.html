@@ -1,0 +1,167 @@
+<!DOCTYPE html>
+<html lang="id" xmlns="http://www.w3.org/1999/xhtml">
+<head>
+    <meta charset="utf-8">
+    <meta name="description" content="MOOC IPWIJA — Program pembelajaran daring terbuka untuk umum, diselenggarakan sebagai Pengabdian kepada Masyarakat (PkM) oleh dosen Informatika Universitas IPWIJA. Gratis, tanpa periode gelombang, mencakup Rekayasa Perangkat Lunak, Pemrograman Berorientasi Objek, dan Robotika.">
+    <meta name="keywords" content="MOOC, PkM, pengabdian kepada masyarakat, kursus daring gratis, terbuka untuk umum, rekayasa perangkat lunak, pemrograman berorientasi objek, robotika, IPWIJA, DonatJS">
+    <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=5">
+    <meta http-equiv="Cache-Control" content="max-age=1209600">
+
+    <title>MOOC IPWIJA</title>
+    <link rel="canonical" href="https://donat.id/">
+
+    <meta property="og:type" content="website">
+    <meta property="og:url" content="https://donat.id/">
+    <meta property="og:locale" content="id_ID">
+    <meta property="og:title" content="MOOC IPWIJA — Belajar Terbuka & Gratis">
+    <meta property="og:description" content="Program Massive Open Online Course (MOOC) sebagai bentuk Pengabdian kepada Masyarakat dosen Informatika IPWIJA — terbuka untuk umum, gratis, tanpa periode gelombang. Modul: Rekayasa Perangkat Lunak, Pemrograman Berorientasi Objek, Robotika.">
+    <meta property="og:image" content="https://donat.id/assets/donatjs-banner.jpeg">
+    <meta property="og:site_name" content="MOOC IPWIJA">
+
+    <meta name="twitter:card" content="summary_large_image">
+    <meta name="twitter:title" content="MOOC IPWIJA — Belajar Terbuka & Gratis">
+    <meta name="twitter:description" content="Belajar RPL, PBO, dan Robotika secara gratis dan terbuka untuk umum. Program PkM dosen Informatika IPWIJA, powered by DonatJS.">
+    <meta name="twitter:image" content="https://donat.id/assets/donatjs-banner.jpeg">
+
+    <link rel="stylesheet" type="text/css" href="style.css">
+    <link rel="stylesheet" type="text/css" href="svg.css">
+</head>
+<body>
+
+  <div id="printarea" class="cetak hide"></div>
+  <div id="depan" class="hide"></div>
+
+  <main id="main" class="main spotlight">
+       <div id="bawah" class="pDarkColor toast hide"></div>
+  </main>
+
+  <div class="row" id="header">.</div>
+
+  <div class="main" id="body">
+    <div id="stickyHeaderWrap">
+    <div class="row header">
+        <div class="kiri">
+            <span class="orange">MOOC IPWIJA</span>
+            <span class="orange sub"></span>
+        </div>
+        <div class="kanan">
+            <div id="authSlot" class="auth-slot"></div>
+            <i class="di-facebook"></i>
+            <i class="di-instagram"></i>
+            <i class="di-twitter"></i>
+        </div>
+    </div>
+
+    <div class="row" >
+        <div class="menu-bar" id="stickyMenu">
+            <div class="burger" id="burgerBtn">&#9776;</div>
+            <nav class="nav-links" id="navLinks">
+              <!-- Menu final dirender otomatis oleh renderMenu() setelah pages/*.js selesai dimuat. -->
+              <a href="/?home" onclick="return web.navigate('home')">Home</a>
+            </nav>
+        </div>
+    </div>
+    </div>
+
+
+
+<div id="content"></div>
+
+<!-- ============================================================
+     FORM DRAWER — panel geser dari kanan, dipakai ULANG oleh SEMUA
+     form tambah/edit (dosen, admin, kuis) lewat web.openDrawer() /
+     web.openFormFromPage() (lihat script.js). Markup statis 1x di
+     sini supaya tiap halaman TIDAK perlu merender drawer-nya sendiri.
+     ============================================================ -->
+<div id="formDrawerOverlay" class="form-drawer-overlay" onclick="web.closeDrawer()"></div>
+<div id="formDrawerPanel" class="form-drawer" role="dialog" aria-modal="true" aria-labelledby="formDrawerTitle">
+    <div class="form-drawer-header">
+        <span class="form-drawer-header-title" id="formDrawerTitle"></span>
+        <button type="button" class="form-drawer-close" onclick="web.closeDrawer()">&times; Tutup</button>
+    </div>
+    <div class="form-drawer-body" id="formDrawerBody"></div>
+</div>
+
+<!-- ============================================================
+     MODUL DRAWER — "Daftar Modul" geser dari kanan, dipakai oleh
+     section 'learningModule' (lihat components.learningModule &
+     web.openModulDrawer() / web.closeModulDrawer() di script.js).
+     Markup statis 1x di sini, sama pola dengan FORM DRAWER di atas.
+     ============================================================ -->
+<div id="modulDrawerOverlay" class="modul-drawer-overlay" onclick="web.closeModulDrawer()"></div>
+<div id="modulDrawerPanel" class="modul-drawer" role="dialog" aria-modal="true" aria-labelledby="modulDrawerTitle">
+    <div class="modul-drawer-header">
+        <span class="modul-drawer-header-title" id="modulDrawerTitle">Daftar Modul</span>
+        <button type="button" class="modul-drawer-close" onclick="web.closeModulDrawer()">&times; Tutup</button>
+    </div>
+    <div class="modul-drawer-body" id="modulDrawerBody"></div>
+</div>
+
+<div class="row footer"  >
+    <div class="kiri">MOOC &mdash; Program Pengabdian kepada Masyarakat &mdash; Powered by DonatJS</div>
+    <div class="kanan">&nbsp; &copy; 2026 Wawan Sismadi</div>
+</div>
+
+</div>
+<script type="text/javascript" src="svg.js"></script>
+<script type="text/javascript" src="script.js"></script>
+
+<!-- Unduh Sertifikat sebagai PDF — html2canvas menangkap tampilan
+     .cert-border APA ADANYA (desain HTML/CSS yang sudah ada, tanpa
+     aset gambar/template baru), lalu jsPDF membungkusnya jadi 1 file
+     PDF berukuran pas (lihat web.downloadCertificatePDF di script.js). -->
+<script type="text/javascript" src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+<script type="text/javascript" src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+
+<!-- Login Google (Google Identity Services) — nonaktif, dipakai login sederhana (auth.js) -->
+<!-- <script src="https://accounts.google.com/gsi/client" async defer></script> -->
+
+<!-- Data layer (localStorage sekarang, siap migrasi ke D1) + peran -->
+<script type="text/javascript" src="db.js"></script>
+<script type="text/javascript" src="auth.js"></script>
+<script type="text/javascript" src="courses.js"></script>
+<script type="text/javascript" src="dosen.js"></script>
+<script type="text/javascript" src="admin.js"></script>
+<script type="text/javascript" src="quiz.js"></script>
+
+<script type="text/javascript" src="config.js"></script>
+
+<script type="text/javascript">
+// Inisialisasi SVG icons
+if (typeof svg !== 'undefined') svg.di();
+</script>
+
+<script type="text/javascript">
+
+// Menu dibangun langsung dari siteConfig (didefinisikan di dataset.js).
+// Tidak ada lagi daftar menu terpisah di sini — urutan & label menu
+// cukup diatur di satu tempat (siteConfig), lihat komentar di dataset.js.
+function renderMenu() {
+    const navLinks = document.getElementById('navLinks');
+    if (!navLinks) return;
+
+    // `role` dan `guestOnly` (opsional, lihat dataset.js) menyaring menu
+    // sesuai status login & peran — admin ikut melihat menu ber-`role`.
+    const user = (typeof auth !== 'undefined') ? auth.currentUser() : null;
+
+    navLinks.innerHTML = siteConfig
+        .filter(p => p.menu)
+        .filter(p => !p.guestOnly || !user)
+        .filter(p => !p.role || (user && (user.role === p.role || user.role === 'admin')))
+        .map(p => `<a href="/?${p.slug}" onclick="return web.navigate('${p.slug}')">${p.label}</a>`)
+        .join('\n');
+
+    if (typeof auth !== 'undefined') auth.renderAuthUI();
+}
+
+</script>
+
+<script src="dataset.js"></script>
+<script>
+    loadPageScripts(pageFiles, () => {
+        renderMenu();
+    });
+</script>
+
+</body>
+</html>

@@ -181,7 +181,15 @@ const web = {
         this.openDrawer({ ...articleBlock.rightCol, title: opts.title || heroTitle || articleBlock.rightCol.subtitle });
     },
 
-    navigate: function(slug) {
+    // [PATCH D1] async: beberapa resolver (resolveLearningModule,
+    // resolveDosenDashboard, resolveKuisDashboard, resolveCertificate)
+    // sekarang async karena menunggu Worker API (db.js versi D1) —
+    // jadi hasilnya (bisa berupa array ATAU Promise<array>) di-await di
+    // sini dengan `await Promise.resolve(...)`, supaya resolver LAMA yang
+    // masih sinkron (resolveContent, resolveSettings, dst.) tetap jalan
+    // tanpa perubahan apa pun. ui.render juga di-await (lihat patchnya)
+    // karena components.courseCatalog kini bisa async juga.
+    navigate: async function(slug) {
         this.closeDrawer(); // [DEDUP] pindah halaman APAPUN otomatis menutup drawer yang terbuka
         const queryString = window.location.search.substring(1);
         const currentPath = slug || queryString || 'home';
@@ -193,12 +201,12 @@ const web = {
         if (typeof this[resolverName] === 'function') {
             // targetSlug diteruskan sebagai argumen ke-2 agar resolver generik
             // (mis. resolveLearningModule) tahu kursus mana yang diminta.
-            pageData = this[resolverName](subParam, targetSlug);
+            pageData = await Promise.resolve(this[resolverName](subParam, targetSlug));
         } else {
             pageData = this.resolveContent(targetSlug, subParam);
         }
 
-        ui.render('content', pageData);
+        await ui.render('content', pageData);
 
         if (slug !== undefined) {
             window.history.pushState({ path: currentPath }, '', `?${currentPath}`);
@@ -1060,10 +1068,17 @@ const components = {
 // ============================================================
 
 const ui = {
-    render: (id, dataArray) => {
+    // [PATCH D1] async: components.courseCatalog sekarang async (courses.js),
+    // sisanya (titleHero, article, dst.) tetap sinkron seperti semula.
+    // Promise.resolve() membungkus KEDUANYA secara seragam supaya baris ini
+    // tidak perlu tahu komponen mana yang async dan mana yang tidak.
+    render: async (id, dataArray) => {
         const el = web.gebi(id);
         if (el && Array.isArray(dataArray)) {
-            el.innerHTML = dataArray.map(d => components[d.section]?.(d) || '').join('');
+            const rendered = await Promise.all(
+                dataArray.map(d => Promise.resolve(components[d.section]?.(d) || ''))
+            );
+            el.innerHTML = rendered.join('');
         }
     }
 };

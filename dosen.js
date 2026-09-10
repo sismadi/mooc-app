@@ -1,15 +1,15 @@
 // ============================================================
 // DOSEN DASHBOARD — /?dosen dan sub-halamannya.
 // ============================================================
+// VERSI ASYNC (D1): setiap fungsi di sini yang (langsung atau tidak
+// langsung, lewat courseSvc/quizSvc) menyentuh db.* sekarang jadi
+// `async function`, dan setiap pemanggilannya diberi `await`. Fungsi
+// murni pembentuk form yang TIDAK butuh data dari db (formTambahKursus)
+// tetap sinkron.
+//
 // Satu slug 'dosen' menampung beberapa sub-view (kursusku, tambah
 // kursus, modul, tambah materi, update periode, peserta), dibedakan
-// lewat subParam berformat "aksi:parameter" (mis. "modul:rpl") — pola
-// ini konsisten dengan cara web.navigate() di script.js sudah meneruskan
-// subParam ke resolver, jadi TIDAK perlu menambah apa pun ke script.js.
-//
-// Semua tampilan memakai komponen render yang sudah ada (titleHero,
-// article, table:, card:, form:, link:) — tidak ada komponen baru
-// khusus untuk dosen.
+// lewat subParam berformat "aksi:parameter" — pola ini tidak berubah.
 // ============================================================
 web.routes.dosen = 'resolveDosenDashboard';
 
@@ -19,9 +19,9 @@ web.routes.dosen = 'resolveDosenDashboard';
 // slug lewat URL. `courseSvc.isOwner` sudah otomatis meloloskan admin,
 // jadi guard yang sama ini SEKALIGUS yang membuat Dashboard Admin bisa
 // memakai ulang seluruh halaman/aksi dosen (lihat admin.js) tanpa
-// duplikasi kode.
-function requireOwnedCourse(slug, user) {
-    const course = courseSvc.get(slug);
+// duplikasi kode. Sekarang async karena courseSvc.get() menunggu API.
+async function requireOwnedCourse(slug, user) {
+    const course = await courseSvc.get(slug);
     if (!course) return { denied: [{ section: 'titleHero', title: 'Kursus Tidak Ditemukan' }] };
     if (!courseSvc.isOwner(course, user)) {
         return { denied: [{ section: 'titleHero', title: 'Akses Ditolak',
@@ -31,11 +31,11 @@ function requireOwnedCourse(slug, user) {
 }
 
 const dosenView = {
-    kursusku(user) {
-        const mine = courseSvc.myCourses(user);
-        const rows = mine.map(c => {
-            const total   = courseSvc.categoriesOf(c.slug).flatMap(cat => cat.items || []).length;
-            const peserta = courseSvc.participantsOf(c.slug).length;
+    async kursusku(user) {
+        const mine = await courseSvc.myCourses(user);
+        const rows = await Promise.all(mine.map(async c => {
+            const total   = (await courseSvc.categoriesOf(c.slug)).flatMap(cat => cat.items || []).length;
+            const peserta = (await courseSvc.participantsOf(c.slug)).length;
             return {
                 Kursus: c.title,
                 Periode: c.period,
@@ -47,7 +47,7 @@ const dosenView = {
                        <a href="javascript:void(0)" onclick="web.navigate('dosen/peserta:${c.slug}')">Peserta</a> ·
                        <a href="javascript:void(0)" onclick="dosenAction.hapusKursus('${c.slug}')">Hapus</a>`
             };
-        });
+        }));
 
         return [
             { section: 'titleHero', title: 'Dashboard Dosen',
@@ -68,8 +68,8 @@ const dosenView = {
     },
 
     /** Form edit kursus (judul/deskripsi/harga/periode) + tombol hapus kursus. */
-    formEditKursus(slug, user) {
-        const guard = requireOwnedCourse(slug, user);
+    async formEditKursus(slug, user) {
+        const guard = await requireOwnedCourse(slug, user);
         if (guard.denied) return guard.denied;
         const c = guard.course;
 
@@ -101,6 +101,7 @@ const dosenView = {
         ];
     },
 
+    // Tidak menyentuh db sama sekali (form kosong) — tetap sinkron.
     formTambahKursus() {
         return [
             { section: 'titleHero', title: 'Tambah Kursus Baru' },
@@ -125,12 +126,13 @@ const dosenView = {
         ];
     },
 
-    listModul(slug, user) {
-        const guard = requireOwnedCourse(slug, user);
+    async listModul(slug, user) {
+        const guard = await requireOwnedCourse(slug, user);
         if (guard.denied) return guard.denied;
         const c = guard.course;
 
-        const rows = courseSvc.categoriesOf(slug).flatMap(cat => (cat.items || []).map(i => ({
+        const categories = await courseSvc.categoriesOf(slug);
+        const rows = categories.flatMap(cat => (cat.items || []).map(i => ({
             Kategori: cat.name,
             Materi: i.title,
             Aksi: courseSvc.isEditableMaterial(i.id)
@@ -161,8 +163,8 @@ const dosenView = {
         ];
     },
 
-    formTambahMateri(slug, user) {
-        const guard = requireOwnedCourse(slug, user);
+    async formTambahMateri(slug, user) {
+        const guard = await requireOwnedCourse(slug, user);
         if (guard.denied) return guard.denied;
         const c = guard.course;
 
@@ -191,11 +193,11 @@ const dosenView = {
         ];
     },
 
-    formEditMateri(slug, itemId, user) {
-        const guard = requireOwnedCourse(slug, user);
+    async formEditMateri(slug, itemId, user) {
+        const guard = await requireOwnedCourse(slug, user);
         if (guard.denied) return guard.denied;
         const c    = guard.course;
-        const item = courseSvc.getMaterial(slug, itemId);
+        const item = await courseSvc.getMaterial(slug, itemId);
         if (!item) return [{ section: 'titleHero', title: 'Materi Tidak Ditemukan' }];
 
         return [
@@ -223,8 +225,8 @@ const dosenView = {
         ];
     },
 
-    formPeriode(slug, user) {
-        const guard = requireOwnedCourse(slug, user);
+    async formPeriode(slug, user) {
+        const guard = await requireOwnedCourse(slug, user);
         if (guard.denied) return guard.denied;
         const c = guard.course;
 
@@ -247,12 +249,12 @@ const dosenView = {
         ];
     },
 
-    listPeserta(slug, user) {
-        const guard = requireOwnedCourse(slug, user);
+    async listPeserta(slug, user) {
+        const guard = await requireOwnedCourse(slug, user);
         if (guard.denied) return guard.denied;
         const c = guard.course;
 
-        const rows = courseSvc.participantsOf(slug);
+        const rows = await courseSvc.participantsOf(slug);
 
         return [
             { section: 'titleHero', title: `Peserta — ${c.title}` },
@@ -273,29 +275,30 @@ const dosenView = {
 const dosenAction = {
     // [DRAWER] Pembuka form tambah/edit lewat drawer kanan — mengambil ULANG
     // konfigurasi field dari dosenView.formXxx yang SUDAH ADA lewat
-    // web.openFormFromPage (script.js), supaya definisi field TIDAK
-    // dituliskan dua kali (sekali untuk halaman, sekali untuk drawer).
-    bukaTambahKursus() {
+    // web.openFormFromPage (script.js). Sekarang di-`await` DI SINI
+    // (bukan di dalam openFormFromPage) supaya openFormFromPage sendiri
+    // tetap sinkron — cukup menerima array blok yang sudah selesai.
+    async bukaTambahKursus() {
         web.openFormFromPage(dosenView.formTambahKursus());
     },
-    bukaEditKursus(slug) {
-        web.openFormFromPage(dosenView.formEditKursus(slug, auth.currentUser()));
+    async bukaEditKursus(slug) {
+        web.openFormFromPage(await dosenView.formEditKursus(slug, auth.currentUser()));
     },
-    bukaTambahMateri(slug) {
-        web.openFormFromPage(dosenView.formTambahMateri(slug, auth.currentUser()));
+    async bukaTambahMateri(slug) {
+        web.openFormFromPage(await dosenView.formTambahMateri(slug, auth.currentUser()));
     },
-    bukaEditMateri(slug, itemId) {
-        web.openFormFromPage(dosenView.formEditMateri(slug, itemId, auth.currentUser()));
+    async bukaEditMateri(slug, itemId) {
+        web.openFormFromPage(await dosenView.formEditMateri(slug, itemId, auth.currentUser()));
     },
 
-    submitTambahKursus(form) {
+    async submitTambahKursus(form) {
         const user = auth.currentUser();
         const slug = form.querySelector('[name="slug"]').value.trim().toLowerCase().replace(/[^a-z0-9-]/g, '-');
         if (!slug) { alert('Slug tidak boleh kosong.'); return; }
-        if (courseSvc.get(slug)) { alert('Slug sudah dipakai, gunakan slug lain.'); return; }
+        if (await courseSvc.get(slug)) { alert('Slug sudah dipakai, gunakan slug lain.'); return; }
         if (web.routes[slug]) { alert('Slug tidak boleh sama dengan halaman sistem, gunakan slug lain.'); return; }
 
-        courseSvc.create({
+        await courseSvc.create({
             slug,
             title: form.querySelector('[name="title"]').value.trim(),
             description: form.querySelector('[name="description"]').value.trim(),
@@ -304,14 +307,14 @@ const dosenAction = {
             instructorUsername: user.username,
             instructorName: user.name
         });
-        courseSvc.registerRoutes(); // supaya slug baru langsung bisa dibuka tanpa reload
+        await courseSvc.registerRoutes(); // supaya slug baru langsung bisa dibuka tanpa reload
 
         alert('Kursus berhasil dibuat.');
         web.navigate('dosen');
     },
 
-    submitTambahMateri(form, slug) {
-        courseSvc.addMaterial(slug, {
+    async submitTambahMateri(form, slug) {
+        await courseSvc.addMaterial(slug, {
             title: form.querySelector('[name="title"]').value.trim(),
             type: form.querySelector('[name="type"]').value,
             url: form.querySelector('[name="url"]').value.trim()
@@ -321,14 +324,14 @@ const dosenAction = {
         web.navigate('dosen/modul:' + slug);
     },
 
-    submitPeriode(form, slug) {
-        courseSvc.update(slug, { period: form.querySelector('[name="period"]').value.trim() });
+    async submitPeriode(form, slug) {
+        await courseSvc.update(slug, { period: form.querySelector('[name="period"]').value.trim() });
         alert('Periode berhasil diperbarui.');
         web.navigate('dosen');
     },
 
-    submitEditMateri(form, slug, itemId) {
-        courseSvc.updateMaterial(slug, itemId, {
+    async submitEditMateri(form, slug, itemId) {
+        await courseSvc.updateMaterial(slug, itemId, {
             title: form.querySelector('[name="title"]').value.trim(),
             type: form.querySelector('[name="type"]').value,
             url: form.querySelector('[name="url"]').value.trim()
@@ -337,15 +340,15 @@ const dosenAction = {
         web.navigate('dosen/modul:' + slug);
     },
 
-    hapusMateri(slug, itemId) {
+    async hapusMateri(slug, itemId) {
         if (!confirm('Hapus materi ini? Tindakan tidak bisa dibatalkan.')) return;
-        courseSvc.removeMaterial(slug, itemId);
+        await courseSvc.removeMaterial(slug, itemId);
         alert('Materi berhasil dihapus.');
         web.navigate('dosen/modul:' + slug);
     },
 
-    submitEditKursus(form, slug) {
-        courseSvc.update(slug, {
+    async submitEditKursus(form, slug) {
+        await courseSvc.update(slug, {
             title: form.querySelector('[name="title"]').value.trim(),
             description: form.querySelector('[name="description"]').value.trim(),
             price: form.querySelector('[name="price"]').value.trim() || 'Gratis',
@@ -355,17 +358,17 @@ const dosenAction = {
         web.navigate('dosen');
     },
 
-    hapusKursus(slug) {
+    async hapusKursus(slug) {
         if (!confirm('Hapus kursus ini beserta seluruh materinya? Tindakan tidak bisa dibatalkan.')) return;
-        courseSvc.remove(slug);
+        await courseSvc.remove(slug);
         // Kuis milik kursus ini (lihat quiz.js) ikut dihapus, kalau ada.
-        if (typeof quizSvc !== 'undefined') quizSvc.remove(slug);
+        if (typeof quizSvc !== 'undefined') await quizSvc.remove(slug);
         alert('Kursus berhasil dihapus.');
         web.navigate('dosen');
     }
 };
 
-web.resolveDosenDashboard = function (subParam) {
+web.resolveDosenDashboard = async function (subParam) {
     const user = auth.currentUser();
 
     if (!user) {

@@ -1,38 +1,24 @@
 // ============================================================
 // QUIZ — Kuis per KURSUS (bukan lagi 1 kuis global untuk RPL saja).
 // ============================================================
-// Tujuan file ini: menyambungkan akun (db 'users'), kursus (courseSvc),
-// kuis, dan sertifikat (pages.certificates) supaya Dashboard menampilkan
-// info yang realistis & terintegrasi — bukan angka lepas seperti sebelumnya.
+// VERSI ASYNC (D1): quizSvc & certSvc sekarang async (db.js memanggil
+// Worker API lewat fetch). Semua override (web.evaluateQuiz,
+// web.resolveCertificate, web.resolveKuisDashboard) dan tambahan ke
+// dosenView/dosenAction di file ini ikut jadi async, dengan pola yang
+// sama seperti courses.js & dosen.js: setiap pemanggilan db.*/courseSvc.*
+// yang lama sinkron sekarang diberi `await`.
 //
-// Skema tabel baru di db.js (tanpa mengubah db.js — db.js sudah generik):
+// Skema tabel (lihat schema.sql):
 //   quizzes       : { id, slug, title, passingGrade, password, questions }
-//                   -> SATU baris per kursus (kunci: slug), questions
-//                      berformat sama seperti pages/kuis.js lama:
-//                      [{ q, options:[...], ans: btoa('jawaban benar') }]
 //   quizAttempts  : { id, username, slug, score, date }
-//                   -> riwayat pengerjaan, PER AKUN PER KURSUS.
-//
-// Halaman publik '/?kuis' (dulu statis, 1 kuis) sekarang jadi:
-//   - '/?kuis'      → daftar semua kuis yang tersedia (lintas kursus)
-//   - '/?kuis/slug' → halaman pengerjaan kuis kursus tsb
-// memakai ULANG components.quizEngine (script.js), hanya diperluas lewat
-// override (persis pola components.courseCatalog di courses.js) supaya
-// (a) password kuis boleh dikosongkan, dan (b) submit kuis ikut membawa
-// slug kursus — tanpa menyentuh script.js sama sekali.
-//
-// Pengelolaan soal oleh dosen ("Kelola Kuis" di tiap kursus) ditambahkan
-// dengan MENIMPA/menambah properti ke `dosenView` & `dosenAction` (sudah
-// dideklarasikan di dosen.js) — bukan mendefinisikan ulang objeknya, jadi
-// tidak menduplikasi kode akses/kepemilikan kursus yang sudah ada di sana
-// (requireOwnedCourse), sekaligus otomatis ikut menikmati akses admin.
+//   certificates  : { id, username, name, slug, examTitle, score, date }
 // ============================================================
 const quizSvc = {
-    of(slug) {
+    async of(slug) {
         return db.find('quizzes', q => q.slug === slug);
     },
 
-    upsert(slug, { title, passingGrade, password, questions }) {
+    async upsert(slug, { title, passingGrade, password, questions }) {
         return db.upsertBy('quizzes', q => q.slug === slug, {
             slug,
             title: title || `Kuis ${slug}`,
@@ -42,19 +28,20 @@ const quizSvc = {
         });
     },
 
-    remove(slug) {
-        const rec = this.of(slug);
-        if (rec) db.remove('quizzes', rec.id);
-        db.query('quizAttempts', a => a.slug === slug).forEach(a => db.remove('quizAttempts', a.id));
+    async remove(slug) {
+        const rec = await this.of(slug);
+        if (rec) await db.remove('quizzes', rec.id);
+        const attempts = await db.query('quizAttempts', a => a.slug === slug);
+        await Promise.all(attempts.map(a => db.remove('quizAttempts', a.id)));
         return true;
     },
 
-    lastAttempt(username, slug) {
-        const rows = db.query('quizAttempts', a => a.username === username && a.slug === slug);
+    async lastAttempt(username, slug) {
+        const rows = await db.query('quizAttempts', a => a.username === username && a.slug === slug);
         return rows.length ? rows[rows.length - 1] : null;
     },
 
-    recordAttempt(username, slug, score) {
+    async recordAttempt(username, slug, score) {
         return db.insert('quizAttempts', { username, slug, score, date: new Date().toISOString() });
     }
 };
@@ -73,12 +60,12 @@ const quizSvc = {
 const certSvc = {
     /** Kode sertifikat deterministik per akun+kursus, supaya 1 peserta
      *  hanya punya 1 sertifikat per kursus (lulus ulang = update, bukan
-     *  dobel baris). */
+     *  dobel baris). Murni, tidak menyentuh db — tetap sinkron. */
     codeFor(username, slug) {
         return `SLS-KUIS-${slug}-${username}`.toUpperCase().replace(/[^A-Z0-9-]/g, '-');
     },
 
-    award(user, slug, examTitle, score) {
+    async award(user, slug, examTitle, score) {
         const id = this.codeFor(user.username, slug);
         return db.upsertBy('certificates', c => c.id === id, {
             id, username: user.username, name: user.name, slug, examTitle, score,
@@ -86,37 +73,24 @@ const certSvc = {
         });
     },
 
-    of(username) {
+    async of(username) {
         return db.query('certificates', c => c.username === username);
     },
 
-    get(id) {
+    async get(id) {
         return db.find('certificates', c => c.id === id);
     }
 };
 
-// --- Seed 1 kuis demo (RPL) — konten sama seperti pages/kuis.js lama,
-// supaya kuis contoh yang sudah ada tidak hilang saat migrasi ke model
-// per-kursus. Hanya jalan sekali (tabel 'quizzes' kosong). ---
-db.seedIfEmpty('quizzes', [
-    {
-        id: 'quiz_rpl',
-        slug: 'rpl',
-        title: 'Evaluasi Kompetensi: Rekayasa Perangkat Lunak',
-        passingGrade: 75,
-        password: 'DonatJS',
-        questions: [
-            { q: 'Berapakah nilai x dari persamaan 2x + 5 = 13?', options: ['3', '4', '6', '8'], ans: btoa('4') },
-            { q: 'Jika 3(x - 2) = x + 10, maka nilai x adalah...', options: ['4', '6', '8', '10'], ans: btoa('8') },
-            { q: 'Tentukan penyelesaian dari persamaan 5x - 7 = 2x + 8.', options: ['3', '5', '15', '2'], ans: btoa('5') }
-        ]
-    }
-]);
+// --- Seed 1 kuis demo (RPL) sekarang dilakukan lewat schema.sql
+// (INSERT INTO quizzes ...), BUKAN lagi db.seedIfEmpty() di client —
+// lihat catatan di db.js versi D1. Blok db.seedIfEmpty('quizzes', ...)
+// yang dulu ada di sini sengaja dihapus.
 
 // ============================================================
 // OVERRIDE — components.quizEngine (versi asli di script.js)
-// Tambahan: password boleh kosong (langsung terbuka, tanpa layar kunci),
-// dan hasil submit ikut membawa `slug` kursus ke web.evaluateQuiz().
+// TIDAK menyentuh db sama sekali (murni membangun form dari `ctx` yang
+// sudah di-resolve sebelumnya) — tetap sinkron, tidak berubah.
 // ============================================================
 components.quizEngine = (ctx) => {
     const randomized = [...(ctx.questions || [])].sort(() => Math.random() - 0.5);
@@ -150,14 +124,13 @@ components.quizEngine = (ctx) => {
 };
 
 // ============================================================
-// OVERRIDE FINAL — web.evaluateQuiz
+// OVERRIDE FINAL — web.evaluateQuiz (ASYNC)
 // Menimpa versi generik (script.js) sekaligus versi lama di auth.js.
-// Skor sekarang dicatat PER KURSUS (tabel db 'quizAttempts'), dibaca
-// balik oleh resolveDashboard (auth.js) & resolveKuisDashboard di bawah.
-// Tambahan: kalau skor >= passingGrade kuis, sertifikat diterbitkan
-// otomatis lewat certSvc.award() supaya langsung muncul di Dashboard.
+// Dipanggil dari onsubmit (lihat components.quizEngine di atas) —
+// fire-and-forget async dari HTML tetap berjalan normal di browser,
+// tidak perlu di-await oleh pemanggilnya.
 // ============================================================
-web.evaluateQuiz = function (form, questions, slug) {
+web.evaluateQuiz = async function (form, questions, slug) {
     const score = questions.reduce((acc, q, idx) => {
         const selected = form.querySelector(`input[name="q${idx}"]:checked`);
         return (selected && btoa(selected.value) === q.ans) ? acc + 1 : acc;
@@ -165,15 +138,15 @@ web.evaluateQuiz = function (form, questions, slug) {
     const finalScore = Number(((score / questions.length) * 100).toFixed(2));
 
     const user = auth.currentUser();
-    const quiz = slug ? quizSvc.of(slug) : null;
+    const quiz = slug ? await quizSvc.of(slug) : null;
     let lulus  = false;
 
     if (user && slug) {
-        quizSvc.recordAttempt(user.username, slug, finalScore);
+        await quizSvc.recordAttempt(user.username, slug, finalScore);
         lulus = !!quiz && finalScore >= quiz.passingGrade;
         if (lulus) {
-            const c = courseSvc.get(slug);
-            certSvc.award(user, slug, quiz.title || c?.title || slug, finalScore);
+            const c = await courseSvc.get(slug);
+            await certSvc.award(user, slug, quiz.title || c?.title || slug, finalScore);
         }
     }
 
@@ -185,17 +158,20 @@ web.evaluateQuiz = function (form, questions, slug) {
 };
 
 // ============================================================
-// OVERRIDE — web.resolveCertificate
+// OVERRIDE — web.resolveCertificate (ASYNC)
 // Menimpa versi asli (script.js) supaya kode sertifikat KUIS (certSvc,
 // tabel db 'certificates') ikut bisa diverifikasi lewat '/?cert/<id>' —
 // dibungkus (bukan ditulis ulang total) memakai referensi resolver asli
 // supaya sertifikat STATIS (pages.certificates, pages/cert.js) & halaman
 // form verifikasi tanpa ID tetap berperilaku persis seperti semula.
+// _baseResolveCertificate (script.js) TIDAK menyentuh db, jadi tetap
+// dipanggil sinkron lewat .call() — hanya dibungkus fungsi luar yang
+// async karena bagian certSvc.get() di atasnya butuh await.
 // ============================================================
 const _baseResolveCertificate = web.resolveCertificate;
-web.resolveCertificate = function (id) {
+web.resolveCertificate = async function (id) {
     if (id) {
-        const c = certSvc.get(id);
+        const c = await certSvc.get(id);
         if (c) {
             return [{ section: 'certificate', id, name: c.name, exam: c.examTitle, score: c.score, date: c.date }];
         }
@@ -204,18 +180,18 @@ web.resolveCertificate = function (id) {
 };
 
 // ============================================================
-// ROUTE PUBLIK — '/?kuis' & '/?kuis/<slug>'
+// ROUTE PUBLIK — '/?kuis' & '/?kuis/<slug>' (ASYNC)
 // ============================================================
 web.routes.kuis = 'resolveKuisDashboard';
 
-web.resolveKuisDashboard = function (subParam) {
+web.resolveKuisDashboard = async function (subParam) {
     const user = auth.currentUser();
 
     // --- Halaman pengerjaan kuis 1 kursus -------------------------------
     if (subParam) {
         const slug = subParam.split('?')[0];
-        const c    = courseSvc.get(slug);
-        const quiz = quizSvc.of(slug);
+        const c    = await courseSvc.get(slug);
+        const quiz = await quizSvc.of(slug);
 
         if (!c || !quiz) {
             return [{ section: 'titleHero', title: 'Kuis Tidak Ditemukan',
@@ -235,7 +211,7 @@ web.resolveKuisDashboard = function (subParam) {
         // 100% (seluruh modul sudah dilihat). Dihitung lewat courseSvc.
         // progressOf() (courses.js) — sumber yang sama dipakai Dashboard,
         // supaya angka progress yang dilihat peserta selalu konsisten.
-        const { viewed, total, pct } = courseSvc.progressOf(user.username, slug);
+        const { viewed, total, pct } = await courseSvc.progressOf(user.username, slug);
         if (pct < 100) {
             return [
                 { section: 'titleHero', title: `Kuis — ${quiz.title}`,
@@ -259,7 +235,7 @@ web.resolveKuisDashboard = function (subParam) {
             ];
         }
 
-        const last = quizSvc.lastAttempt(user.username, slug);
+        const last = await quizSvc.lastAttempt(user.username, slug);
         return [
             { section: 'titleHero', title: `Kuis — ${quiz.title}` },
             {
@@ -287,14 +263,18 @@ web.resolveKuisDashboard = function (subParam) {
     }
 
     // --- Daftar semua kuis (lintas kursus) ------------------------------
-    const rows = courseSvc.list()
-        .map(c => ({ c, quiz: quizSvc.of(c.slug) }))
-        .filter(x => x.quiz)
-        .map(({ c, quiz }) => {
-            const last = user ? quizSvc.lastAttempt(user.username, c.slug) : null;
+    // Setiap baris butuh beberapa await (quizSvc.of, lastAttempt,
+    // progressOf) — dibuat lewat Promise.all(map(async ...)) alih-alih
+    // .map() biasa, lalu difilter setelah semuanya selesai (filter tidak
+    // bisa dilakukan sebelum tahu quiz-nya ada atau tidak).
+    const allCourses = await courseSvc.list();
+    const withQuiz = await Promise.all(allCourses.map(async c => ({ c, quiz: await quizSvc.of(c.slug) })));
+    const rows = await Promise.all(
+        withQuiz.filter(x => x.quiz).map(async ({ c, quiz }) => {
+            const last = user ? await quizSvc.lastAttempt(user.username, c.slug) : null;
             // Progress dipakai utk mengunci aksi "Kerjakan" sampai 100% —
             // sama seperti gerbang di halaman pengerjaan kuis (atas).
-            const pct  = user ? courseSvc.progressOf(user.username, c.slug).pct : null;
+            const pct  = user ? (await courseSvc.progressOf(user.username, c.slug)).pct : null;
             return {
                 Kursus: c.title,
                 'Passing Grade': quiz.passingGrade + '%',
@@ -304,7 +284,8 @@ web.resolveKuisDashboard = function (subParam) {
                     ? `<span style="color:var(--aColor)">Selesaikan materi dulu</span>`
                     : `<a href="javascript:void(0)" onclick="web.navigate('kuis/${c.slug}')">Kerjakan</a>`
             };
-        });
+        })
+    );
 
     return [
         { section: 'titleHero', title: 'Kuis', description: 'Pilih kursus untuk mengerjakan kuisnya.' },
@@ -320,42 +301,28 @@ web.resolveKuisDashboard = function (subParam) {
 };
 
 // ============================================================
-// DASHBOARD DOSEN — "Kelola Kuis" per kursus.
+// DASHBOARD DOSEN — "Kelola Kuis" per kursus. (ASYNC)
 // Ditambahkan sbg properti baru ke dosenView/dosenAction (dideklarasikan
 // di dosen.js) — dipanggil oleh dispatcher resolveDosenDashboard lewat
-// action 'kuis' (dosen.js sudah menyediakan cabang pemanggilannya).
-// Guard kepemilikan memakai ULANG requireOwnedCourse (dosen.js) supaya
-// aturan "hanya dosen pengampu (atau admin) yang boleh kelola" konsisten
-// di satu tempat saja.
-//
-// dosenView.formKelolaKuis — ROUTER tipis untuk sub-halaman "Kelola Kuis".
-// subParam dari dosen.js diteruskan APA ADANYA sebagai `param` (lihat
-// komentar dosen.js: "'kuis' didaftarkan oleh quiz.js"), berformat
-// "slug" (daftar soal, default) atau "slug:edit:index" (form edit 1
-// soal) — pola sama seperti "dosen/editmateri:slug:id" di dosen.js,
-// hanya diparsing di sini supaya dosen.js TIDAK perlu tahu apa pun
-// soal sub-aksi kuis ini.
+// action 'kuis'. Guard kepemilikan memakai ULANG requireOwnedCourse
+// (dosen.js, sekarang async) supaya aturan "hanya dosen pengampu (atau
+// admin) yang boleh kelola" konsisten di satu tempat saja.
 // ============================================================
-dosenView.formKelolaKuis = function (param, user) {
+dosenView.formKelolaKuis = async function (param, user) {
     const [slug, subAction, idxStr] = String(param || '').split(':');
     if (subAction === 'edit') return dosenView.formEditSoal(slug, Number(idxStr), user);
     return dosenView.listKelolaKuis(slug, user);
 };
 
-// [DRAWER] Halaman ini dulu memuat 2 form PENUH inline (Pengaturan Kuis di
-// leftCol, Tambah Soal Baru di article ke-2) — sekarang keduanya, PLUS
-// "Edit Soal" (dulu halaman terpisah 'dosen/kuis:slug:edit:idx'), dibuka
-// lewat drawer kanan (web.openFormFromPage). Definisi field masing-masing
-// form dipindah ke dosenView.formPengaturanKuis / formTambahSoal (di
-// bawah) SATU KALI saja — listKelolaKuis di sini cukup menampilkan
-// ringkasan pengaturan + tombol pemicu drawer, supaya halaman tetap
-// ringkas seperti daftar (bukan form panjang).
-dosenView.listKelolaKuis = function (slug, user) {
-    const guard = requireOwnedCourse(slug, user);
+// [DRAWER] Halaman ini menampilkan ringkasan pengaturan kuis + tombol
+// pemicu drawer (Pengaturan Kuis / Tambah Soal / Edit Soal) — lihat
+// dosenAction.bukaPengaturanKuis dkk di bawah.
+dosenView.listKelolaKuis = async function (slug, user) {
+    const guard = await requireOwnedCourse(slug, user);
     if (guard.denied) return guard.denied;
     const c = guard.course;
 
-    const quiz = quizSvc.of(slug) || { title: `Kuis ${c.title}`, passingGrade: 75, password: '', questions: [] };
+    const quiz = (await quizSvc.of(slug)) || { title: `Kuis ${c.title}`, passingGrade: 75, password: '', questions: [] };
 
     const rows = (quiz.questions || []).map((q, i) => ({
         No: i + 1,
@@ -392,16 +359,13 @@ dosenView.listKelolaKuis = function (slug, user) {
     ];
 };
 
-/** Form "Pengaturan Kuis" (judul/passing grade/password) — dulu inline di
- *  leftCol listKelolaKuis, sekarang fungsi tersendiri supaya bisa dibuka
- *  lewat drawer (dosenAction.bukaPengaturanKuis) TANPA menuliskan field-nya
- *  dua kali. */
-dosenView.formPengaturanKuis = function (slug, user) {
-    const guard = requireOwnedCourse(slug, user);
+/** Form "Pengaturan Kuis" (judul/passing grade/password). */
+dosenView.formPengaturanKuis = async function (slug, user) {
+    const guard = await requireOwnedCourse(slug, user);
     if (guard.denied) return guard.denied;
     const c = guard.course;
 
-    const quiz = quizSvc.of(slug) || { title: `Kuis ${c.title}`, passingGrade: 75, password: '', questions: [] };
+    const quiz = (await quizSvc.of(slug)) || { title: `Kuis ${c.title}`, passingGrade: 75, password: '', questions: [] };
 
     return [
         { section: 'titleHero', title: `Pengaturan Kuis — ${c.title}` },
@@ -423,11 +387,9 @@ dosenView.formPengaturanKuis = function (slug, user) {
     ];
 };
 
-/** Form "Tambah Soal Baru" — dulu inline di article ke-2 listKelolaKuis,
- *  sekarang fungsi tersendiri supaya bisa dibuka lewat drawer
- *  (dosenAction.bukaTambahSoal). */
-dosenView.formTambahSoal = function (slug, user) {
-    const guard = requireOwnedCourse(slug, user);
+/** Form "Tambah Soal Baru". */
+dosenView.formTambahSoal = async function (slug, user) {
+    const guard = await requireOwnedCourse(slug, user);
     if (guard.denied) return guard.denied;
     const c = guard.course;
 
@@ -452,14 +414,13 @@ dosenView.formTambahSoal = function (slug, user) {
     ];
 };
 
-/** Form edit 1 soal — pre-isi dari quiz.questions[index] (pola sama
- *  dengan dosenView.formEditMateri di dosen.js). */
-dosenView.formEditSoal = function (slug, index, user) {
-    const guard = requireOwnedCourse(slug, user);
+/** Form edit 1 soal — pre-isi dari quiz.questions[index]. */
+dosenView.formEditSoal = async function (slug, index, user) {
+    const guard = await requireOwnedCourse(slug, user);
     if (guard.denied) return guard.denied;
     const c = guard.course;
 
-    const quiz = quizSvc.of(slug);
+    const quiz = await quizSvc.of(slug);
     const item = quiz?.questions?.[index];
     if (!item) {
         return [{ section: 'titleHero', title: 'Soal Tidak Ditemukan',
@@ -489,21 +450,22 @@ dosenView.formEditSoal = function (slug, index, user) {
 };
 
 // [DRAWER] Pembuka form Pengaturan Kuis / Tambah Soal / Edit Soal lewat
-// drawer kanan — sama pola dengan dosenAction.bukaTambahKursus dkk di
-// dosen.js (web.openFormFromPage mengambil ULANG field dari dosenView.formXxx).
-dosenAction.bukaPengaturanKuis = function (slug) {
-    web.openFormFromPage(dosenView.formPengaturanKuis(slug, auth.currentUser()));
+// drawer kanan — sekarang async, await hasil form.formXxx SEBELUM
+// diteruskan ke web.openFormFromPage (yang tetap sinkron), sama pola
+// dengan dosenAction.bukaEditKursus dkk di dosen.js.
+dosenAction.bukaPengaturanKuis = async function (slug) {
+    web.openFormFromPage(await dosenView.formPengaturanKuis(slug, auth.currentUser()));
 };
-dosenAction.bukaTambahSoal = function (slug) {
-    web.openFormFromPage(dosenView.formTambahSoal(slug, auth.currentUser()));
+dosenAction.bukaTambahSoal = async function (slug) {
+    web.openFormFromPage(await dosenView.formTambahSoal(slug, auth.currentUser()));
 };
-dosenAction.bukaEditSoal = function (slug, index) {
-    web.openFormFromPage(dosenView.formEditSoal(slug, index, auth.currentUser()));
+dosenAction.bukaEditSoal = async function (slug, index) {
+    web.openFormFromPage(await dosenView.formEditSoal(slug, index, auth.currentUser()));
 };
 
-dosenAction.submitKuisSettings = function (form, slug) {
-    const existing = quizSvc.of(slug);
-    quizSvc.upsert(slug, {
+dosenAction.submitKuisSettings = async function (form, slug) {
+    const existing = await quizSvc.of(slug);
+    await quizSvc.upsert(slug, {
         title: form.querySelector('[name="title"]').value.trim(),
         passingGrade: form.querySelector('[name="passingGrade"]').value,
         password: form.querySelector('[name="password"]').value.trim(),
@@ -513,7 +475,7 @@ dosenAction.submitKuisSettings = function (form, slug) {
     web.navigate('dosen/kuis:' + slug);
 };
 
-dosenAction.submitTambahSoal = function (form, slug) {
+dosenAction.submitTambahSoal = async function (form, slug) {
     const q       = form.querySelector('[name="q"]').value.trim();
     const options = form.querySelector('[name="options"]').value.split('\n').map(s => s.trim()).filter(Boolean);
     const ans     = form.querySelector('[name="ans"]').value.trim();
@@ -521,9 +483,9 @@ dosenAction.submitTambahSoal = function (form, slug) {
     if (options.length < 2) { alert('Minimal 2 pilihan jawaban.'); return; }
     if (!options.includes(ans)) { alert('Jawaban benar harus sama persis dengan salah satu pilihan di atas.'); return; }
 
-    const existing  = quizSvc.of(slug);
+    const existing  = await quizSvc.of(slug);
     const questions = [...(existing?.questions || []), { q, options, ans: btoa(ans) }];
-    quizSvc.upsert(slug, {
+    await quizSvc.upsert(slug, {
         title: existing?.title, passingGrade: existing?.passingGrade, password: existing?.password, questions
     });
 
@@ -531,7 +493,7 @@ dosenAction.submitTambahSoal = function (form, slug) {
     web.navigate('dosen/kuis:' + slug);
 };
 
-dosenAction.submitEditSoal = function (form, slug, index) {
+dosenAction.submitEditSoal = async function (form, slug, index) {
     const q       = form.querySelector('[name="q"]').value.trim();
     const options = form.querySelector('[name="options"]').value.split('\n').map(s => s.trim()).filter(Boolean);
     const ans     = form.querySelector('[name="ans"]').value.trim();
@@ -539,11 +501,11 @@ dosenAction.submitEditSoal = function (form, slug, index) {
     if (options.length < 2) { alert('Minimal 2 pilihan jawaban.'); return; }
     if (!options.includes(ans)) { alert('Jawaban benar harus sama persis dengan salah satu pilihan di atas.'); return; }
 
-    const existing = quizSvc.of(slug);
+    const existing = await quizSvc.of(slug);
     if (!existing || !existing.questions[index]) { alert('Soal tidak ditemukan.'); return; }
 
     const questions = existing.questions.map((item, i) => i !== index ? item : { q, options, ans: btoa(ans) });
-    quizSvc.upsert(slug, {
+    await quizSvc.upsert(slug, {
         title: existing.title, passingGrade: existing.passingGrade, password: existing.password, questions
     });
 
@@ -551,12 +513,12 @@ dosenAction.submitEditSoal = function (form, slug, index) {
     web.navigate('dosen/kuis:' + slug);
 };
 
-dosenAction.hapusSoal = function (slug, index) {
+dosenAction.hapusSoal = async function (slug, index) {
     if (!confirm('Hapus soal ini? Tindakan tidak bisa dibatalkan.')) return;
-    const existing = quizSvc.of(slug);
+    const existing = await quizSvc.of(slug);
     if (!existing) return;
     const questions = existing.questions.filter((_, i) => i !== index);
-    quizSvc.upsert(slug, {
+    await quizSvc.upsert(slug, {
         title: existing.title, passingGrade: existing.passingGrade, password: existing.password, questions
     });
     alert('Soal berhasil dihapus.');

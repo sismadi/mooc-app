@@ -80,6 +80,11 @@ const db = {
         return true;
     },
 
+    /** Rute khusus (bukan tabel) — kirim email reset password lewat Worker (Resend). */
+    async sendResetEmail({ to, name, resetUrl }) {
+        return apiSend('POST', 'send-reset-email', { to, name, resetUrl });
+    },
+
     // seedIfEmpty dihapus dari client — akun demo & kuis contoh (RPL)
     // sekarang dibuat lewat INSERT di schema.sql (dijalankan sekali saat
     // setup database D1), bukan dicek ulang tiap load halaman.

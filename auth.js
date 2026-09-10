@@ -122,26 +122,33 @@ const auth = {
 
     // --- Lupa / Reset Password ------------------------------------------
     /**
-     * Buat token reset & "kirim" ke email pemilik akun. CATATAN PENTING:
-     * ini aplikasi client-side (tanpa server), jadi tidak ada layanan
-     * email sungguhan yang bisa dipanggil dari sini. Sebagai gantinya,
-     * tautan reset ditampilkan langsung ke pengguna (mensimulasikan isi
-     * email yang "diterima") lewat web.resolveLupaPasswordSent di bawah.
-     * Untuk produksi sungguhan, ganti bagian "kirim" ini dengan pemanggilan
-     * endpoint backend yang benar-benar mengirim email.
-     * Mengembalikan { error } atau { resetUrl, user }.
+     * Buat token reset & KIRIM email sungguhan lewat Worker (worker.js →
+     * Resend, lihat db.sendResetEmail). Kalau pengiriman gagal (mis. domain
+     * pengirim belum diverifikasi di Resend), tautan reset tetap
+     * dikembalikan & ditampilkan langsung ke pengguna lewat
+     * web.resolveLupaPasswordSent di bawah, supaya alur tidak buntu.
+     * Mengembalikan { error } atau { resetUrl, user, emailSent }.
      */
     async requestPasswordReset(email) {
         const user = await db.find('users', u => u.email && u.email.toLowerCase() === String(email).trim().toLowerCase());
         // Pesan sengaja sama baik email ditemukan atau tidak (di pemanggil),
         // supaya orang tidak bisa menebak email mana yang terdaftar.
-        if (!user) return { error: null, user: null, resetUrl: null };
+        if (!user) return { error: null, user: null, resetUrl: null, emailSent: false };
 
         const token = 'reset_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 10);
         await db.insert('passwordResets', { username: user.username, token, expiresAt: Date.now() + this.RESET_TOKEN_TTL_MS });
 
         const resetUrl = `${window.location.origin}${window.location.pathname}?reset-password/${token}`;
-        return { error: null, user, resetUrl };
+
+        let emailSent = false;
+        try {
+            await db.sendResetEmail({ to: user.email, name: user.name, resetUrl });
+            emailSent = true;
+        } catch (e) {
+            console.warn('Gagal kirim email reset password, tampilkan tautan langsung:', e);
+        }
+
+        return { error: null, user, resetUrl, emailSent };
     },
 
     /** Ambil record token reset yang masih berlaku (belum kadaluarsa). */
@@ -293,11 +300,13 @@ const auth = {
             return;
         }
 
-        const { resetUrl } = await this.requestPasswordReset(email);
-        // Simpan URL (kalau ada) untuk ditampilkan di halaman konfirmasi.
-        // Lihat catatan di auth.requestPasswordReset soal keterbatasan
-        // demo client-side ini (tidak ada server email sungguhan).
-        this._lastResetUrl = resetUrl || null;
+        const { resetUrl, emailSent } = await this.requestPasswordReset(email);
+        // emailSent true → email sungguhan sudah terkirim (Resend), tautan
+        // TIDAK ditampilkan lagi di halaman konfirmasi. emailSent false
+        // (mis. email tidak terdaftar, atau pengiriman gagal) → tautan
+        // tetap ditampilkan langsung supaya alur tidak buntu — lihat
+        // web.resolveLupaPasswordSent di bawah.
+        this._lastResetUrl = emailSent ? null : (resetUrl || null);
         web.navigate('lupa-password-terkirim');
     },
 
@@ -443,31 +452,31 @@ web.resolveLupaPassword = function () {
 };
 
 // --- Resolver 'lupa-password-terkirim' — konfirmasi setelah submit -----
-// CATATAN: karena ini aplikasi client-side tanpa server, tidak ada email
-// sungguhan yang benar-benar terkirim. Tautan reset ditampilkan langsung
-// di halaman ini (mensimulasikan isi email) supaya alur tetap bisa dicoba
-// end-to-end dalam demo. Untuk deployment sungguhan, ganti dengan
-// pemanggilan API backend yang mengirim email asli dan JANGAN tampilkan
-// tautannya di layar.
+// Sejak ada worker.js:handleSendResetEmail (Resend), email reset SUNGGUHAN
+// terkirim ke inbox pengguna → auth._lastResetUrl akan `null` (lihat
+// handleForgotPasswordSubmit) dan halaman ini cukup minta orang cek email.
+// Tautan reset HANYA ditampilkan langsung di sini sebagai fallback, kalau
+// pengiriman emailnya gagal (mis. domain pengirim di Resend belum
+// diverifikasi) — supaya alur tidak buntu.
 web.resolveLupaPasswordSent = function () {
     const resetUrl = auth._lastResetUrl;
     auth._lastResetUrl = null; // sekali tampil saja
 
     return [
         { section: 'titleHero', title: 'Periksa Email Anda',
-          description: 'Jika email tersebut terdaftar, tautan untuk reset password telah "dikirim".' },
+          description: 'Jika email tersebut terdaftar, tautan untuk reset password telah dikirim.' },
         {
             section: 'article',
             leftCol: {
                 subtitle: '',
                 lines: resetUrl
                     ? [
-                        'Ini adalah demo tanpa server email sungguhan, jadi tautan resetnya ditampilkan langsung di sini:',
+                        'Pengiriman email gagal, jadi tautan resetnya ditampilkan langsung di sini:',
                         `<div class="a-row"><input type="text" readonly id="reset-url" value="${resetUrl}" onclick="this.select()" style="width:70%">
                             <button class="slcBtn" onclick="navigator.clipboard.writeText(web.gebi('reset-url').value); alert('Tautan berhasil disalin!');">Salin Tautan</button></div>`,
                         `link:Buka Tautan Reset:${resetUrl.split('?')[1]}`
                       ]
-                    : ['Jika email itu memang terdaftar, Anda akan menerima instruksi reset password.']
+                    : ['Jika email itu memang terdaftar, Anda akan menerima email berisi tautan reset password dalam beberapa saat. Periksa juga folder Spam/Junk.']
             },
             rightCol: { subtitle: '', lines: ['link:Kembali ke Halaman Masuk:login'] }
         }
@@ -709,9 +718,20 @@ web.resolvePublicPortfolio = async function (username) {
     ];
 };
 
-web.resolveSettings = function () {
+web.resolveSettings = async function () {
     const profile = JSON.parse(localStorage.getItem(auth.userKey('slsProfile')) || '{}');
     const user    = auth.currentUser();
+    if (!user) {
+        return [
+            { section: 'titleHero', title: 'Pengaturan / Profil', description: 'Silakan masuk terlebih dahulu.' },
+            { section: 'article',
+              leftCol: { subtitle: '', lines: ['link:Ke Halaman Masuk:login'] },
+              rightCol: { subtitle: '', lines: [] } }
+        ];
+    }
+    // name & email diprioritaskan dari D1 (sumber kebenaran, lihat
+    // web.saveProfile) — localStorage cuma fallback/cache utk `notif`.
+    const record = await db.find('users', u => u.username === user.username);
 
     return [
         { section: 'titleHero', title: 'Pengaturan / Profil',
@@ -735,9 +755,9 @@ web.resolveSettings = function () {
                 subtitle: 'Profil Saya',
                 fields: [
                     { type: 'text',   name: 'name',  id: 'set-name',  label: 'Nama Lengkap',
-                      value: profile.name  || user?.name || '', placeholder: 'Nama Anda', required: true },
+                      value: record?.name  || profile.name  || user?.name || '', placeholder: 'Nama Anda', required: true },
                     { type: 'email',  name: 'email', id: 'set-email', label: 'Email',
-                      value: profile.email || '', placeholder: 'nama@email.com' },
+                      value: record?.email || profile.email || '', placeholder: 'nama@email.com' },
                     { type: 'select', name: 'notif', id: 'set-notif', label: 'Notifikasi Email',
                       value: profile.notif || 'on',
                       options: [{ value: 'on', label: 'Aktifkan' }, { value: 'off', label: 'Matikan' }] }
@@ -750,13 +770,39 @@ web.resolveSettings = function () {
     ];
 };
 
-web.saveProfile = function (form) {
-    const data = {
-        name:  form.querySelector('[name="name"]')?.value.trim()  || '',
-        email: form.querySelector('[name="email"]')?.value.trim() || '',
-        notif: form.querySelector('[name="notif"]')?.value        || 'on'
-    };
-    localStorage.setItem(auth.userKey('slsProfile'), JSON.stringify(data));
+web.saveProfile = async function (form) {
+    const user = auth.currentUser();
+    if (!user) { alert('Sesi Anda sudah berakhir, silakan masuk kembali.'); return web.navigate('login'); }
+
+    const name  = form.querySelector('[name="name"]')?.value.trim()  || '';
+    const email = form.querySelector('[name="email"]')?.value.trim() || '';
+    const notif = form.querySelector('[name="notif"]')?.value        || 'on';
+
+    if (!name) { alert('Nama tidak boleh kosong.'); return; }
+
+    // Ambil record akun dari D1 (butuh id-nya utk update — session cuma
+    // simpan username/name/role, lihat auth.login()).
+    const record = await db.find('users', u => u.username === user.username);
+    if (!record) { alert('Akun tidak ditemukan.'); return; }
+
+    // Kolom `email` UNIQUE di D1 (lihat schema.sql) — cek dulu supaya tidak
+    // bentrok dengan akun lain, sama seperti validasi di auth.register().
+    if (email) {
+        const other = await db.find('users', u => u.email && u.email.toLowerCase() === email.toLowerCase() && u.username !== user.username);
+        if (other) { alert('Email sudah dipakai akun lain, gunakan email lain.'); return; }
+    }
+
+    // name & email = sumber kebenarannya tabel `users` di D1 (dipakai juga
+    // oleh login, lupa password, & pencocokan nama sertifikat) — BUKAN
+    // localStorage lagi. `notif` tidak ada kolomnya di D1, jadi tetap
+    // disimpan lokal saja (fitur kosmetik, per-perangkat).
+    await db.update('users', record.id, { name, email });
+    localStorage.setItem(auth.userKey('slsProfile'), JSON.stringify({ name, email, notif }));
+
+    // Sinkronkan sesi supaya nama baru langsung tampil (mis. "Selamat
+    // datang kembali, <name>" di Dashboard) tanpa perlu login ulang.
+    localStorage.setItem(auth.SESSION_KEY, JSON.stringify({ username: user.username, name, role: user.role }));
+
     alert('Profil berhasil disimpan.');
     this.navigate('dashboard');
 };

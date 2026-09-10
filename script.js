@@ -810,7 +810,7 @@ const components = {
                     <em>${d.tagline}</em> &mdash; ${d.description}<br><br>
                     ${d.badges.map(b => `<span class="badge">${b}</span>`).join(' ')}
                     <br><br>
-                    <a href="/?${d.cta.link}" onclick="return web.navigate('${d.cta.link}')" class="btn-cta">${d.cta.text}</a>
+                    <a href="?${d.cta.link}" onclick="event.preventDefault(); web.navigate('${d.cta.link}')" class="btn-cta">${d.cta.text}</a>
                 </div>
                 <div class="col-1-3 artikel">
                     ${media}

@@ -528,7 +528,7 @@ web.resolveResetPassword = function (token) {
 // dihapus dosen (lihat fitur edit/hapus modul) juga otomatis tidak lagi
 // dihitung sebagai "viewed", supaya angka progress selalu realistis.
 // ============================================================
-web.resolveDashboard = function (subParam) {
+web.resolveDashboard = async function (subParam) {
     // Portofolio publik (tautan share) — /?dashboard/<username>, TIDAK
     // perlu login. Diperiksa PALING AWAL, sebelum guard "harus masuk" di
     // bawah, supaya tautan yang dibagikan bisa dibuka siapa saja tanpa
@@ -557,7 +557,7 @@ web.resolveDashboard = function (subParam) {
     // buildPortfolioData() (bawah file) = SATU-SATUNYA titik hitung, dipakai
     // ulang oleh web.resolvePublicPortfolio supaya Dashboard privat & versi
     // publik yang dibagikan selalu menampilkan angka yang identik.
-    const { progressLines, myCerts } = buildPortfolioData(user.username, name);
+    const { progressLines, myCerts } = await buildPortfolioData(user.username, name);
 
     // Tautan portofolio publik yang bisa dibagikan (lihat resolvePublicPortfolio
     // di bawah) — dibangun dari lokasi halaman saat ini supaya otomatis ikut
@@ -601,7 +601,7 @@ web.resolveDashboard = function (subParam) {
                 subtitle: 'Ringkasan Lainnya',
                 lines: [
                     `card:Modul Terakhir Dilihat:${lastModule}`,
-                    `card:Kuis Dikerjakan:${(typeof quizSvc !== 'undefined') ? db.query('quizAttempts', a => a.username === user.username).length : 0} kali`
+                    `card:Kuis Dikerjakan:${(typeof quizSvc !== 'undefined') ? (await db.query('quizAttempts', a => a.username === user.username)).length : 0} kali`
                 ]
             }
         },
@@ -633,17 +633,18 @@ web.resolveDashboard = function (subParam) {
  * bawah — supaya keduanya selalu menampilkan angka yang identik dan logika
  * penggabungan sertifikat statis+kuis tidak dobel ditulis.
  */
-function buildPortfolioData(username, name) {
-    const progressLines = db.query('progress', p => p.username === username).map(p => {
-        const meta = courseSvc.get(p.slug);
+async function buildPortfolioData(username, name) {
+    const progressRows = await db.query('progress', p => p.username === username);
+    const progressLines = await Promise.all(progressRows.map(async (p) => {
+        const meta = await courseSvc.get(p.slug);
         // courseSvc.progressOf() = satu-satunya sumber hitung persentase
         // (lihat courses.js) — dipakai juga oleh gerbang kuis 100% & daftar
         // kuis di quiz.js, supaya angkanya selalu sinkron di semua halaman.
-        const { viewed, total, pct } = courseSvc.progressOf(username, p.slug);
-        const lastQuiz  = (typeof quizSvc !== 'undefined') ? quizSvc.lastAttempt(username, p.slug) : null;
+        const { viewed, total, pct } = await courseSvc.progressOf(username, p.slug);
+        const lastQuiz  = (typeof quizSvc !== 'undefined') ? await quizSvc.lastAttempt(username, p.slug) : null;
         const quizText  = lastQuiz ? ` · Kuis: ${lastQuiz.score}` : '';
         return `skill:${pct}%:${meta?.title || p.slug}:${viewed}/${total} modul${quizText}`;
-    });
+    }));
 
     // Digabung dari DUA sumber: (a) sertifikat STATIS (pages.certificates,
     // dicocokkan lewat nama profil — dipertahankan supaya contoh sertifikat
@@ -657,7 +658,7 @@ function buildPortfolioData(username, name) {
                               Aksi: `<a href="javascript:void(0)" onclick="web.navigate('cert/${id}')">Lihat</a>` }));
 
     const quizCerts = (typeof certSvc !== 'undefined')
-        ? certSvc.of(username).map(c => ({
+        ? (await certSvc.of(username)).map(c => ({
             Kode: c.id, Ujian: c.examTitle, Skor: c.score, Tanggal: c.date,
             Aksi: `<a href="javascript:void(0)" onclick="web.navigate('cert/${c.id}')">Lihat</a>`
           }))
@@ -675,8 +676,8 @@ function buildPortfolioData(username, name) {
  * lain. Nama pemilik diambil lewat auth.profileOf(username) (auth.js
  * bagian atas) supaya benar walau pengunjungnya tidak login sama sekali.
  */
-web.resolvePublicPortfolio = function (username) {
-    const target = db.find('users', u => u.username === username);
+web.resolvePublicPortfolio = async function (username) {
+    const target = await db.find('users', u => u.username === username);
     if (!target) {
         return [{ section: 'titleHero', title: 'Portofolio Tidak Ditemukan',
                    description: `Akun dengan username <strong>${username}</strong> tidak ditemukan.` }];
@@ -684,7 +685,7 @@ web.resolvePublicPortfolio = function (username) {
 
     const profile = auth.profileOf(username);
     const name     = profile.name || target.name;
-    const { progressLines, myCerts } = buildPortfolioData(username, name);
+    const { progressLines, myCerts } = await buildPortfolioData(username, name);
 
     return [
         { section: 'titleHero', title: `Portofolio — ${name}`,

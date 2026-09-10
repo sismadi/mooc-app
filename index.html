@@ -57,7 +57,7 @@
             <div class="burger" id="burgerBtn">&#9776;</div>
             <nav class="nav-links" id="navLinks">
               <!-- Menu final dirender otomatis oleh renderMenu() setelah pages/*.js selesai dimuat. -->
-              <a href="/?home" onclick="return web.navigate('home')">Home</a>
+              <a href="?home" onclick="event.preventDefault(); web.navigate('home')">Home</a>
             </nav>
         </div>
     </div>
@@ -148,7 +148,7 @@ function renderMenu() {
         .filter(p => p.menu)
         .filter(p => !p.guestOnly || !user)
         .filter(p => !p.role || (user && (user.role === p.role || user.role === 'admin')))
-        .map(p => `<a href="/?${p.slug}" onclick="return web.navigate('${p.slug}')">${p.label}</a>`)
+        .map(p => `<a href="?${p.slug}" onclick="event.preventDefault(); web.navigate('${p.slug}')">${p.label}</a>`)
         .join('\n');
 
     if (typeof auth !== 'undefined') auth.renderAuthUI();

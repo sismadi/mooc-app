@@ -91,9 +91,9 @@ const auth = {
         catch (e) { return null; }
     },
 
-    login(username, password) {
+    async login(username, password) {
         if (this.isLockedOut(username)) return 'locked';
-        const user = db.find('users', u => u.username === username && u.password === password);
+        const user = await db.find('users', u => u.username === username && u.password === password);
         if (!user) { this._recordLoginFailure(username); return false; }
         this._clearLoginAttempts(username);
         localStorage.setItem(this.SESSION_KEY, JSON.stringify({
@@ -109,14 +109,14 @@ const auth = {
      * bukan lewat pendaftaran mandiri ini.
      * Mengembalikan string pesan error, atau null kalau berhasil.
      */
-    register({ username, password, name, email }) {
+    async register({ username, password, name, email }) {
         if (!username || !password || !name || !email) return 'Semua field wajib diisi.';
         if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return 'Format email tidak valid.';
-        if (db.find('users', u => u.username === username)) return 'Username sudah dipakai, gunakan username lain.';
-        if (db.find('users', u => u.email && u.email.toLowerCase() === email.toLowerCase())) return 'Email sudah terdaftar, gunakan email lain.';
+        if (await db.find('users', u => u.username === username)) return 'Username sudah dipakai, gunakan username lain.';
+        if (await db.find('users', u => u.email && u.email.toLowerCase() === email.toLowerCase())) return 'Email sudah terdaftar, gunakan email lain.';
 
-        db.insert('users', { username, password, name, role: 'peserta', email });
-        this.login(username, password); // langsung masuk setelah daftar
+        await db.insert('users', { username, password, name, role: 'peserta', email });
+        await this.login(username, password); // langsung masuk setelah daftar
         return null;
     },
 
@@ -131,38 +131,38 @@ const auth = {
      * endpoint backend yang benar-benar mengirim email.
      * Mengembalikan { error } atau { resetUrl, user }.
      */
-    requestPasswordReset(email) {
-        const user = db.find('users', u => u.email && u.email.toLowerCase() === String(email).trim().toLowerCase());
+    async requestPasswordReset(email) {
+        const user = await db.find('users', u => u.email && u.email.toLowerCase() === String(email).trim().toLowerCase());
         // Pesan sengaja sama baik email ditemukan atau tidak (di pemanggil),
         // supaya orang tidak bisa menebak email mana yang terdaftar.
         if (!user) return { error: null, user: null, resetUrl: null };
 
-        const token = db._id('reset') + Math.random().toString(36).slice(2, 10);
-        db.insert('passwordResets', { username: user.username, token, expiresAt: Date.now() + this.RESET_TOKEN_TTL_MS });
+        const token = 'reset_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 10);
+        await db.insert('passwordResets', { username: user.username, token, expiresAt: Date.now() + this.RESET_TOKEN_TTL_MS });
 
         const resetUrl = `${window.location.origin}${window.location.pathname}?reset-password/${token}`;
         return { error: null, user, resetUrl };
     },
 
     /** Ambil record token reset yang masih berlaku (belum kadaluarsa). */
-    validResetToken(token) {
-        const rec = db.find('passwordResets', r => r.token === token);
+    async validResetToken(token) {
+        const rec = await db.find('passwordResets', r => r.token === token);
         if (!rec) return null;
-        if (Date.now() >= rec.expiresAt) { db.remove('passwordResets', rec.id); return null; }
+        if (Date.now() >= rec.expiresAt) { await db.remove('passwordResets', rec.id); return null; }
         return rec;
     },
 
     /** Set password baru lewat token yang valid. Mengembalikan string error, atau null kalau berhasil. */
-    resetPassword(token, newPassword) {
+    async resetPassword(token, newPassword) {
         if (!newPassword || newPassword.length < 6) return 'Password baru minimal 6 karakter.';
-        const rec = this.validResetToken(token);
+        const rec = await this.validResetToken(token);
         if (!rec) return 'Tautan reset tidak valid atau sudah kadaluarsa. Silakan minta tautan baru.';
 
-        const user = db.find('users', u => u.username === rec.username);
+        const user = await db.find('users', u => u.username === rec.username);
         if (!user) return 'Akun terkait tautan ini tidak ditemukan.';
 
-        db.update('users', user.id, { password: newPassword });
-        db.remove('passwordResets', rec.id);
+        await db.update('users', user.id, { password: newPassword });
+        await db.remove('passwordResets', rec.id);
         this._clearLoginAttempts(user.username); // reset percobaan gagal yang mungkin masih terkunci
         return null;
     },
@@ -225,7 +225,7 @@ const auth = {
         if (typeof svg?.di === 'function') svg.di();
     },
 
-    handleLoginSubmit(form) {
+    async handleLoginSubmit(form) {
         const username = form.querySelector('[name="username"]').value.trim();
         const password = form.querySelector('[name="password"]').value;
         const captcha  = form.querySelector('[name="captcha"]').value;
@@ -242,7 +242,7 @@ const auth = {
             return;
         }
 
-        const result = this.login(username, password);
+        const result = await this.login(username, password);
         if (result === true) {
             if (typeof renderMenu === 'function') renderMenu();
             web.navigate('dashboard');
@@ -259,7 +259,7 @@ const auth = {
         }
     },
 
-    handleRegisterSubmit(form) {
+    async handleRegisterSubmit(form) {
         const username = form.querySelector('[name="username"]').value.trim().toLowerCase();
         const password = form.querySelector('[name="password"]').value;
         const confirm  = form.querySelector('[name="confirm"]').value;
@@ -275,7 +275,7 @@ const auth = {
 
         if (password !== confirm) { alert('Konfirmasi password tidak cocok.'); return; }
 
-        const err = this.register({ username, password, name, email });
+        const err = await this.register({ username, password, name, email });
         if (err) { alert(err); web.navigate('daftar'); return; }
 
         if (typeof renderMenu === 'function') renderMenu();
@@ -283,7 +283,7 @@ const auth = {
         web.navigate('dashboard');
     },
 
-    handleForgotPasswordSubmit(form) {
+    async handleForgotPasswordSubmit(form) {
         const email   = form.querySelector('[name="email"]').value.trim();
         const captcha = form.querySelector('[name="captcha"]').value;
 
@@ -293,7 +293,7 @@ const auth = {
             return;
         }
 
-        const { resetUrl } = this.requestPasswordReset(email);
+        const { resetUrl } = await this.requestPasswordReset(email);
         // Simpan URL (kalau ada) untuk ditampilkan di halaman konfirmasi.
         // Lihat catatan di auth.requestPasswordReset soal keterbatasan
         // demo client-side ini (tidak ada server email sungguhan).
@@ -301,13 +301,13 @@ const auth = {
         web.navigate('lupa-password-terkirim');
     },
 
-    handleResetPasswordSubmit(form, token) {
+    async handleResetPasswordSubmit(form, token) {
         const password = form.querySelector('[name="password"]').value;
         const confirm  = form.querySelector('[name="confirm"]').value;
 
         if (password !== confirm) { alert('Konfirmasi password tidak cocok.'); return; }
 
-        const err = this.resetPassword(token, password);
+        const err = await this.resetPassword(token, password);
         if (err) { alert(err); return; }
 
         alert('Password berhasil diganti. Silakan masuk dengan password baru Anda.');

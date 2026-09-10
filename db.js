@@ -20,7 +20,12 @@
 // Skema tabel: lihat schema.sql (7 tabel: users, courses, progress,
 // passwordResets, quizzes, quizAttempts, certificates)
 // ============================================================
-const API_BASE = '/api';
+// PENTING: mooc-app (sismadi.com/mooc-app) dan mooc-api (Worker Cloudflare)
+// adalah DUA origin yang berbeda — jadi API_BASE harus URL absolut ke Worker,
+// bukan path relatif '/api' (yang tadinya cuma jalan kalau app & API disajikan
+// dari domain/route yang sama). Worker-nya sendiri sudah kirim header
+// Access-Control-Allow-Origin: * di worker.js, jadi panggilan cross-origin ini aman.
+const API_BASE = 'https://mooc-api.sismadi.workers.dev/api';
 
 async function apiGet(path) {
     const res = await fetch(`${API_BASE}/${path}`);
